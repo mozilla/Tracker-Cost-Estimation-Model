@@ -1,0 +1,52 @@
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# CatBoost
+catboost_info/
+
+# Python
+__pycache__/
+*.pyc
+
+# Large data files (tracked in data/ but raw CSVs are big)
+data/raw/per_request_full.csv
+data/raw/per_request_features.csv
+
+# Local-only files
+FINDINGS*.md
+EXPERIMENT_SPEC.md
+FULL_EXPERIMENT_SPEC.md
+
+# Old domain-level pipeline (kept locally)
+src/data/feature_engineering.py
+src/model/conformal.py
+src/model/evaluate.py
+src/model/quantile.py
+src/model/self_training.py
+src/model/train.py
+src/model/visualize.py
+src/pipeline/
+
+# Old outputs
+data/processed/
+data/raw/bootup_features.csv
+models/conformal_results.json
+models/main_thread_cost*.json
+models/network_cost*.json
+models/training_results.json
+models/quantile/
+models/self_trained/
+
+# PDFs
+*.pdf
+
+# OS
+.DS_Store

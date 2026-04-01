@@ -1,0 +1,149 @@
+{
+  "calibration": [
+    {
+      "bin": "0-100",
+      "n": 26462,
+      "pred_mean": 19.67133140563965,
+      "actual_mean": 63.25954198473283,
+      "actual_median": 0.0,
+      "mae": 49.912357330322266,
+      "within_25pct": 0.5127730330284936
+    },
+    {
+      "bin": "100-500",
+      "n": 3476,
+      "pred_mean": 212.263916015625,
+      "actual_mean": 458.0264672036824,
+      "actual_median": 170.0,
+      "mae": 306.50396728515625,
+      "within_25pct": 0.7218066743383199
+    },
+    {
+      "bin": "500-1K",
+      "n": 1117,
+      "pred_mean": 697.4617309570312,
+      "actual_mean": 2144.1199641897942,
+      "actual_median": 563.0,
+      "mae": 1835.0048828125,
+      "within_25pct": 0.4252461951656222
+    },
+    {
+      "bin": "1K-5K",
+      "n": 3250,
+      "pred_mean": 2458.798828125,
+      "actual_mean": 3152.6495384615387,
+      "actual_median": 1668.5,
+      "mae": 1994.5338134765625,
+      "within_25pct": 0.4963076923076923
+    },
+    {
+      "bin": "5K-10K",
+      "n": 1709,
+      "pred_mean": 7168.69677734375,
+      "actual_mean": 8549.987126974838,
+      "actual_median": 6172.0,
+      "mae": 4088.469482421875,
+      "within_25pct": 0.660620245757753
+    },
+    {
+      "bin": "10K-25K",
+      "n": 4044,
+      "pred_mean": 17145.92578125,
+      "actual_mean": 18992.511869436203,
+      "actual_median": 15391.0,
+      "mae": 8775.4755859375,
+      "within_25pct": 0.591246290801187
+    },
+    {
+      "bin": "25K-50K",
+      "n": 1363,
+      "pred_mean": 34424.9921875,
+      "actual_mean": 35910.95377842993,
+      "actual_median": 30842.0,
+      "mae": 21965.0234375,
+      "within_25pct": 0.3727072633895818
+    },
+    {
+      "bin": "50K-100K",
+      "n": 4777,
+      "pred_mean": 82147.0,
+      "actual_mean": 83233.98367176052,
+      "actual_median": 86055.0,
+      "mae": 11714.4697265625,
+      "within_25pct": 0.8658153652920243
+    },
+    {
+      "bin": "100K-250K",
+      "n": 576,
+      "pred_mean": 145427.109375,
+      "actual_mean": 171090.59895833334,
+      "actual_median": 147179.0,
+      "mae": 58128.453125,
+      "within_25pct": 0.7465277777777778
+    },
+    {
+      "bin": "250K+",
+      "n": 120,
+      "pred_mean": 671041.625,
+      "actual_mean": 640626.0916666667,
+      "actual_median": 325641.0,
+      "mae": 475414.4375,
+      "within_25pct": 0.25833333333333336
+    }
+  ],
+  "aggregation": [
+    {
+      "requests_per_week": 50,
+      "model_mae_bytes": 123604.685609375,
+      "lut_mae_bytes": 200266.995,
+      "model_median_pct": 8.899059073813003,
+      "lut_median_pct": 20.109596216474134,
+      "model_p90_pct": 33.84911208517072,
+      "lut_p90_pct": 49.872856271143206,
+      "model_within_10pct": 0.528,
+      "lut_within_10pct": 0.259
+    },
+    {
+      "requests_per_week": 100,
+      "model_mae_bytes": 251471.6050625,
+      "lut_mae_bytes": 447016.5705,
+      "model_median_pct": 8.384706246174689,
+      "lut_median_pct": 20.99225987547097,
+      "model_p90_pct": 32.078638288577025,
+      "lut_p90_pct": 49.36984841055594,
+      "model_within_10pct": 0.575,
+      "lut_within_10pct": 0.201
+    },
+    {
+      "requests_per_week": 200,
+      "model_mae_bytes": 387940.370625,
+      "lut_mae_bytes": 791471.6365,
+      "model_median_pct": 7.109615420848105,
+      "lut_median_pct": 22.57281388218184,
+      "model_p90_pct": 26.69387308072517,
+      "lut_p90_pct": 44.73725748116238,
+      "model_within_10pct": 0.627,
+      "lut_within_10pct": 0.15
+    },
+    {
+      "requests_per_week": 500,
+      "model_mae_bytes": 732406.956,
+      "lut_mae_bytes": 1961476.729,
+      "model_median_pct": 6.156408682015334,
+      "lut_median_pct": 24.311446327298043,
+      "model_p90_pct": 21.360092470401096,
+      "lut_p90_pct": 42.06393288476163,
+      "model_within_10pct": 0.69,
+      "lut_within_10pct": 0.053
+    }
+  ],
+  "multitask": {
+    "ct_accuracy": 0.9978791294877429,
+    "single_task_mae": 4391.22265625,
+    "multi_task_mae": 4602.85009765625
+  },
+  "distribution_shift": {
+    "auc": 0.5571632280738967,
+    "error_ood_correlation": 0.049554345279478385
+  }
+}
