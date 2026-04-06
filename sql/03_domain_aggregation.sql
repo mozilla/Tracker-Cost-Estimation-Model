@@ -1,0 +1,9 @@
+-- Stage 3: Domain-level aggregation
+-- NOTE: This query runs on the EXPORTED parquet data, not directly on BigQuery.
+-- It's here for reference. The actual aggregation happens in Python
+-- (src/data/feature_engineering.py) because:
+--   1. We need to join Lighthouse entity names to domains (requires third-party-web mapping)
+--   2. Percentile rank computation is simpler in pandas
+--   3. The exported data is small enough to process locally (~100MB)
+--
+-- See src/data/feature_engineering.py for the implementation.

@@ -16,9 +16,20 @@ catboost_info/
 __pycache__/
 *.pyc
 
-# Large data files (tracked in data/ but raw CSVs are big)
+# Large data files
 data/raw/per_request_full.csv
 data/raw/per_request_features.csv
+data/raw/per_request_1pct.csv
+data/raw/per_request_1pct_sep2024.csv
+
+# Model binaries
+models/per_request/*.json
+models/per_request/*.joblib
+models/per_request/*.npy
+models/per_request/*.pt
+
+# Old files
+old/
 
 # Local-only files
 FINDINGS*.md
