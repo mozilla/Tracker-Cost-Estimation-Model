@@ -31,13 +31,13 @@
 }
 \email{jhan@mozilla.com}
 
-% \author{Tim Huang}
-% \affiliation{%
-%   \institution{Mozilla}
-%   \city{Berlin}
-%   \country{Germany}
-% }
-% \email{thuang@mozilla.com}
+\author{Tim Huang}
+\affiliation{%
+  \institution{Mozilla}
+  \city{Berlin}
+  \country{Germany}
+}
+\email{thuang@mozilla.com}
 
 % \author{Manuel Bucher}
 % \affiliation{%
@@ -51,15 +51,14 @@
 \begin{abstract}
 % ============================================================
 
-Firefox's Enhanced Tracking Protection blocks third-party tracker requests before any response is received, leaving the cost of what was blocked---transfer size, download duration, latency---structurally unknown.
-We develop a per-request cost prediction model, scheduled for deployment to Firefox's 250 million daily active users, that estimates these costs from pre-response features alone.
+Within-domain transfer size varies by three orders of magnitude across tracker domains---yet this variance is predictable from URL structure alone.
+We exploit this to estimate the performance cost of blocked tracker requests in Firefox's Enhanced Tracking Protection, which intercepts requests before any response arrives, leaving costs structurally unobservable.
 
-Analyzing \numrequests tracker requests across \numdomains domains in the HTTP Archive, we find that within-domain transfer size variance spans three orders of magnitude, with the URL path as the primary determinant: the same domain serves both 93\,KB script bundles and 0-byte beacons.
-This variance is invisible to domain-level lookup tables but predictable from URL structure.
-XGBoost with Tweedie loss reduces transfer size MAE by 47.5\% over the best practical lookup table (3,466 vs.\ 6,597 bytes, 95\% CI [3,314, 3,627]) and outperforms even exact-path memorization on matched paths (1,346 vs.\ 1,448), demonstrating learned regularization beyond lookup.
-Loss function selection dominates architecture selection: Tweedie outperforms squared error by 23\% on identical features.
-The model generalizes across time (32.8\% improvement retained on a 3-month temporal holdout) and under correlated-browsing simulation (12.9\% weekly error vs.\ 36.4\% for the lookup table).
-When aggregated to weekly totals, the model's estimate has 6.0\% median error---sufficient for user-facing display.
+We train XGBoost with Tweedie loss on \numrequests HTTP Archive requests across \numdomains tracker domains.
+The model outperforms even exact-path lookup tables on the paths they can match (MAE 1{,}346 vs.\ 1{,}448 bytes), a statistically significant improvement, demonstrating that learned regularization across URL structures beats memorization.
+Overall, it reduces MAE by 8.7\% over the path-level lookup table (the most accurate non-model baseline).
+Tweedie loss---long standard in actuarial science for zero-inflated claims data---outperforms squared error by 23\% on identical features, confirming that loss function selection is the dominant modeling choice: the 23\% gap from switching losses dwarfs the 0.6\% gap from tuning the Tweedie variance parameter ($p=1.2$ vs.\ $p=1.5$).
+The model retains a 32.8\% advantage on a 3-month temporal holdout and reduces weekly aggregation error from 21.9\% to 6.0\% over the deployed domain+type lookup table, with 68.5\% of weeks falling within 10\% of true cost.
 
 \end{abstract}
 
@@ -73,7 +72,7 @@ When aggregated to weekly totals, the model's estimate has 6.0\% median error---
 % ============================================================
 
 Firefox's Enhanced Tracking Protection (ETP) blocks third-party tracker requests identified by the Disconnect list~\cite{disconnectlist}, preventing advertising, analytics, and social tracking scripts from loading.
-Firefox serves approximately 250 million daily active users, each of whom sees a privacy dashboard reporting how many trackers were blocked---but not the performance cost prevented.
+Firefox serves hundreds of millions of daily active users, each of whom sees a privacy dashboard reporting how many trackers were blocked---but not the performance cost prevented.
 Every blocked request is treated equally: a 258-byte tracking pixel from \texttt{bat.bing.com} counts the same as a 170\,KB JavaScript SDK from \texttt{googletagmanager.com}.
 
 Quantifying the cost of blocked requests is a counterfactual estimation problem: the response was never received, so its size and timing are unknown.
@@ -82,7 +81,7 @@ The response---transfer size, content type, download duration---is unobserved.
 
 A natural baseline is a lookup table (LUT) mapping each (domain, resource type) pair to a historical median response size.
 However, a single tracker domain serves resources of vastly different sizes: \texttt{googletagmanager.com/gtag/js} returns a 93\,KB script bundle while \texttt{googletagmanager.com/collect} returns a 0-byte beacon (Figure~\ref{fig:domain-example}).
-We measure within-domain transfer size variance across \numdomains tracker domains and find a coefficient of variation exceeding 3$\times$ at the 75th percentile and 29$\times$ at the 90th, confirming that domain-level aggregation loses critical information.
+We measure within-domain transfer size variance across \numdomains tracker domains and find a coefficient of variation of 0.94 at the median domain and 3.0 at the 90th percentile, confirming that domain-level aggregation loses critical information.
 
 \begin{figure}[t]
     \centering
@@ -91,8 +90,11 @@ We measure within-domain transfer size variance across \numdomains tracker domai
     \label{fig:domain-example}
 \end{figure}
 
-A finer-grained path-level lookup table achieves lower per-request error when it has an exact match, but 75\% of unique URL paths in the test set are unseen in training, and the URL path space changes continuously as tracker SDKs evolve.
+A finer-grained path-level lookup table achieves lower per-request error when it has an exact match, but 75\% of unique URL paths in the test set are unseen in training (though high-frequency paths recur, so only 8.4\% of test rows fall on unseen paths), and the URL path space changes continuously as tracker SDKs evolve.
 A model that generalizes from URL \emph{structure} rather than memorizing exact paths is required.
+
+This raises the central question of our work: can a learned model, trained on completed tracker requests, produce more accurate and more compact per-request cost estimates than any lookup table at matched feature availability?
+We investigate this by comparing XGBoost with Tweedie loss against a hierarchy of lookup tables of increasing granularity, using only features Firefox can observe before a response arrives.
 
 We formulate per-request cost prediction as supervised regression with a structural inference-time information gap.
 The training set consists of completed tracker requests from the HTTP Archive~\cite{httparchive}, where both pre-response features and post-response labels are observed.
@@ -103,9 +105,9 @@ Unlike domain-level cost estimation---which we show does not require machine lea
 \begin{enumerate}
     \item \textbf{Measurement finding.} We measure within-domain transfer size variance across \numdomains tracker domains and find that it spans three orders of magnitude (CV 0.94 at median, 3.0 at 90th percentile), with the URL path---not the domain---as the primary determinant. This variance is predictable from pre-response features, enabling per-request cost estimation rather than crude domain-level averages (\S\ref{sec:problem}--\ref{sec:data}).
 
-    \item \textbf{Methodological finding.} For zero-inflated web response data, loss function selection dominates architecture selection: Tweedie loss outperforms squared error by 23\% on identical XGBoost features, while the gap across tree-based architectures is less than 5 points. Data-driven TF-IDF URL embeddings subsume hand-crafted regex features with a 17\% MAE reduction (\S\ref{sec:loss-ablation}--\ref{sec:feature-ablation}).
+    \item \textbf{Methodological finding.} Tweedie loss---long standard in actuarial science for zero-inflated claims data---transfers to web response data, outperforming squared error by 23\% on identical XGBoost features. The loss function gap (23\%) dwarfs the Tweedie parameter sensitivity (0.6\% between $p=1.2$ and $p=1.5$), making loss selection the dominant modeling choice. Data-driven TF-IDF URL embeddings subsume hand-crafted regex features with a 16.5\% MAE reduction (\S\ref{sec:loss-ablation}--\ref{sec:feature-ablation}).
 
-    \item \textbf{Generalization finding.} The model outperforms even exact-path lookup tables on paths with training matches (MAE 1,346 vs.\ 1,448), demonstrating that learned regularization across URL structures beats memorization. Per-request prediction noise cancels in weekly aggregation---including under correlated browsing patterns---producing estimates with 6.0\% median error (\S\ref{sec:baselines}, \S\ref{sec:aggregation}).
+    \item \textbf{Generalization finding.} The model outperforms even exact-path lookup tables on paths with training matches (MAE 1,346 vs.\ 1,448 bytes), a statistically significant improvement (non-overlapping bootstrap CIs), demonstrating that learned regularization across URL structures beats memorization. Per-request prediction noise cancels in weekly aggregation, producing 6.0\% median error under uniform sampling and 12.9\% under domain-correlated browsing at $N\!=\!200$ (\S\ref{sec:baselines}, \S\ref{sec:aggregation}).
 
     \item \textbf{Negative finding.} Domain-level tracker cost estimation does not require machine learning. We diagnose a feature-space disjointness between labeled and unlabeled domain populations that explains a self-training null result and motivates the per-request reformulation (\S\ref{sec:domain-level}).
 \end{enumerate}
@@ -132,17 +134,17 @@ Our work differs in three respects: (1)~we predict at per-request granularity, e
 \paragraph{Gradient boosted trees on tabular data.}
 XGBoost~\cite{chen2016xgboost}, LightGBM~\cite{ke2017lightgbm}, and CatBoost~\cite{prokhorenkova2018catboost} are the dominant methods for structured prediction tasks.
 \citet{grinsztajn2022tree} systematically compared trees to deep learning across 45 datasets and found trees dominant below $\sim$10K samples and competitive at larger scales.
-Our contribution is not a new architecture but the finding that loss function selection (Tweedie vs.\ squared error) produces a larger accuracy gain than any architectural choice for zero-inflated web response data.
+Tweedie regression has long been standard in actuarial science for zero-inflated, heavy-tailed claims data~\cite{smyth2002tweedie,wuthrich2008stochastic}, and has been applied in ecology~\cite{shono2008tweedie} and other domains with similar distributional properties.
+Our contribution is not the use of Tweedie loss itself but confirming that this actuarial insight transfers to web response data, where the distributional properties (39.5\% exact zeros, heavy right tail) closely parallel insurance claims.
 
 \paragraph{Covariate shift and counterfactual prediction.}
 Our problem involves training on one population (completed HTTP Archive requests) and deploying on another (blocked Firefox requests).
-This setting relates to covariate shift~\cite{shimodaira2000covariate,sugiyama2007importance,quinonero2009dataset}, domain adaptation~\cite{bendavid2010domain,pan2010transfer}, and counterfactual estimation~\cite{rosenbaum1983propensity,bottou2013counterfactual,johansson2016counterfactual}.
-However, our problem is structurally distinct from all three.
-In covariate shift, the conditional $P(Y|X)$ is assumed invariant while $P(X)$ shifts; this holds here because transfer size is server-determined and URL-dependent, not browser-dependent.
-In counterfactual estimation, both treated and control units have outcomes, and the goal is to estimate treatment effects; here, blocked requests have \emph{no} outcome---the response was never generated.
-In domain adaptation, source and target may have different $P(Y|X)$; this does not apply because the same URL returns the same payload to Chrome and Firefox.
-The relevant shift is between HTTP Archive's crawl population (systematic, monthly, from fixed vantage points) and Firefox's real browsing population (organic, continuous, global)---a marginal distribution shift on $P(X)$ that does not affect $P(Y|X)$.
-Importance weighting~\cite{shimodaira2000covariate} could in principle correct for this, but is unnecessary given that the prediction target is deterministic given the URL and server state.
+This is fundamentally a covariate shift setting~\cite{shimodaira2000covariate,sugiyama2007importance,quinonero2009dataset}: $P(X)$ differs between training and deployment while $P(Y|X)$ is invariant, because transfer size is server-determined and URL-dependent, not browser-dependent.
+The shift is between HTTP Archive's crawl population (systematic, monthly, from fixed vantage points) and Firefox's real browsing population (organic, continuous, global).
+Importance weighting~\cite{shimodaira2000covariate} could in principle correct for this marginal shift, but is unnecessary given that the prediction target is nearly deterministic given the URL and server state.
+The setting differs from standard covariate shift in one respect: deployment-population labels are permanently absent (blocked requests will never have responses), so the shift cannot be validated post-hoc.
+It also differs from counterfactual estimation~\cite{rosenbaum1983propensity,bottou2013counterfactual,johansson2016counterfactual}, where both treated and control units have outcomes; here, the blocked response was never generated.
+Domain adaptation~\cite{bendavid2010domain,pan2010transfer}, which allows $P(Y|X)$ to shift, is not needed because the same URL returns the same payload to Chrome and Firefox.
 
 \paragraph{Tracker blocking.}
 Firefox ETP~\cite{disconnectlist}, Brave Shields, Privacy Badger, and uBlock Origin make binary block/allow decisions.
@@ -159,8 +161,8 @@ When Firefox blocks a request to a tracker domain, the browser observes a featur
 The response quantities---transfer size $y_\text{bytes}$, download duration $y_\text{dl}$, and others---are structurally unobservable because the request was blocked before any response arrived.
 The task is to learn $f: \mathcal{X}_\text{pre} \to \mathbb{R}_{\geq 0}$ from completed requests in the HTTP Archive, where both $\mathbf{x}$ and $y$ are observed.
 
-This is not a missing-data problem.
 The labels are not randomly missing but are \emph{structurally absent} for the inference population: blocked requests will never have responses, regardless of future data collection.
+This makes the problem a covariate shift with no possibility of post-deployment label collection, motivating careful offline evaluation (Sections~\ref{sec:baselines}--\ref{sec:temporal}).
 
 \subsection{Training--Deployment Compatibility}
 
@@ -168,6 +170,7 @@ Transfer size is server-determined: the same URL returns the same payload regard
 This means the conditional distribution $P(Y|X)$ does not shift between the training domain (Chrome, via HTTP Archive) and the deployment domain (Firefox).
 Standard domain adaptation concerns~\cite{bendavid2010domain} therefore do not apply to transfer size prediction: the labeling function is invariant, and only the marginal $P(X)$ differs between crawl and organic browsing traffic.
 Training on Chrome-collected HTTP Archive data and deploying in Firefox is valid without importance weighting or domain-adversarial training.
+We verify the random split is IID: a gradient-boosted classifier trained to distinguish HTTP Archive training samples from held-out test samples achieves AUC\,=\,0.557 (chance\,=\,0.5), confirming no substantial systematic feature shift between splits. Deployment validity---training on Chrome HTTP Archive data and inferring in Firefox---is a separate argument and rests on server-determinism: transfer size is a property of the URL and server state, not the requesting client.
 Timing metrics depend on network conditions and client hardware; we discuss this limitation in Section~\ref{sec:limitations}.
 
 \subsection{Why Lookup Tables Are Insufficient}
@@ -180,15 +183,15 @@ We systematically evaluate lookup tables at increasing granularity to establish 
 \small
 \begin{tabular}{lrrr}
 \toprule
-LUT granularity & Entries & MAE (bytes) & vs.\ global \\
+LUT granularity & Entries & MAE (bytes) & Improvement \\
 \midrule
 Global median & 1 & 13,661 & --- \\
-Domain & 2,606 & 7,878 & $-$42.3\% \\
-Domain + resource type & $\sim$7,800 & 6,597 & $-$51.7\% \\
-Domain + URL path & 227,336 & 3,797 & $-$72.2\% \\
+Domain & 2,606 & 7,878 & 42.3\% \\
+Domain + resource type & $\sim$7,800 & 6,597 & 51.7\% \\
+Domain + URL path & 227,336 & 3,797 & 72.2\% \\
 \bottomrule
 \end{tabular}
-\caption{Lookup table accuracy by granularity on the test set (\numtestrows requests). Adding URL path reduces MAE substantially but the table requires 227K entries, and 75\% of unique test paths have no training match.}
+\caption{Lookup table accuracy by granularity on the test set (\numtestrows requests). Adding URL path reduces MAE substantially but the table requires 227K entries, and 75\% of unique test paths have no training match. The domain LUT has 2,606 entries (not all \numdomains domains appear in the training split; the remainder fall back to the global median). The ``Improvement'' column shows percent MAE reduction relative to the global median (MAE 13{,}661); higher is better. Section~\ref{sec:results} uses the domain+type LUT (MAE 6{,}597) as the reference baseline for model improvement figures.}
 \label{tab:lut-hierarchy}
 \end{table}
 
@@ -285,7 +288,7 @@ We also evaluate timing targets; see Section~\ref{sec:multi-target}.
 
 \subsection{Data Split}
 
-Rows are split randomly: 70\% training (\numtrainrows), 15\% validation (523,624), 15\% test (\numtestrows).
+Rows are split randomly: 70\% training (\numtrainrows) and 15\% each for validation and test (\numtestrows rows each).
 Row-level splitting is appropriate because Firefox will have HTTP Archive statistics for all Disconnect-list domains at deployment; domain identity is a known feature at inference time.
 Target encodings are computed exclusively from the training split.
 
@@ -305,15 +308,23 @@ We evaluate four lookup table baselines of increasing granularity, each using th
 
 \subsection{XGBoost with Tweedie Loss}
 
-The zero-inflated, heavy-tailed transfer size distribution motivates the Tweedie loss~\cite{jorgensen1987exponential} with variance power $p \in (1,2)$:
+The zero-inflated, heavy-tailed transfer size distribution motivates the Tweedie loss~\cite{jorgensen1987exponential}, a standard choice for zero-inflated continuous data in actuarial modeling~\cite{smyth2002tweedie,wuthrich2008stochastic}, with variance power $p \in (1,2)$:
 \[
 \ell_\text{Tweedie}(\hat{y}, y) = -y \frac{\hat{y}^{1-p}}{1-p} + \frac{\hat{y}^{2-p}}{2-p}
 \]
 This penalizes errors proportionally to predicted magnitude, focusing capacity on high-cost requests rather than the mass of near-zero beacons.
 We tune $p$ via ablation (Section~\ref{sec:loss-ablation}).
 
-All XGBoost models use 500 trees, max depth 8, learning rate 0.05, row subsampling 0.8, column subsampling 0.7, minimum child weight 10, with early stopping (patience 20) on the validation set.
+All XGBoost models use 500 trees, max depth 8, learning rate 0.05, row subsampling 0.8, column subsampling 0.7, minimum child weight 10, with early stopping (patience 20) on the validation set. Hyperparameters were set based on standard XGBoost defaults and prior experience on tabular regression tasks; no automated search was performed.
 An offset of $+1$ is applied to targets before training (reversed after prediction) to satisfy the Tweedie constraint $\hat{y} > 0$.
+The 500-tree count is justified by post-hoc depth pruning of the trained model via \texttt{iteration\_range} (an upper bound on what fresh retraining would achieve).
+At 200 trees ($\sim$200\,KB ONNX), MAE rises to 3{,}908---worse than the path LUT (3{,}797)---forfeiting the headline advantage; at 300 trees ($\sim$300\,KB), MAE is 3{,}655, marginally better than the path LUT but within its bootstrap CI [3{,}623, 3{,}984] and not distinguishable at 95\% confidence; only 500 trees ($\sim$500\,KB) achieves the statistically significant improvement (Section~\ref{sec:baselines}).
+
+\paragraph{Why no neural baselines.}
+We do not evaluate deep learning architectures (e.g., MLPs or character-level URL encoders).
+The primary constraint is deployment: the model must ship as a compact artifact ($\sim$500\,KB ONNX) for in-browser inference, ruling out large embedding-based architectures.
+\citet{grinsztajn2022tree} provide supporting evidence that tree-based models are competitive with neural networks on tabular data at this scale ($\sim$80 features, $\sim$2.4M rows), though their study finds clear tree dominance primarily below $\sim$10K samples.
+We note that a character-level URL model could in principle capture finer-grained patterns than TF-IDF embeddings, and leave this comparison to future work.
 
 % ============================================================
 \section{Results}
@@ -345,6 +356,7 @@ Path LUT (with fallback) & 3,797 & [3,623, 3,984] & 0.934 \\
 
 The XGBoost model with Tweedie loss achieves the lowest MAE (3,466 bytes), reducing error by 47.5\% relative to the domain+type LUT and by 8.7\% relative to the path LUT (Figure~\ref{fig:baseline-ladder}).
 Notably, the model's confidence interval [3,314, 3,627] does not overlap with the path LUT's [3,623, 3,984], confirming the improvement is statistically significant.
+Bootstrap CIs are reported for the main comparison (Table~\ref{tab:main-results}) and temporal holdout (Table~\ref{tab:temporal}); ablation tables report point estimates only, as they compare models on identical test data and the relative ordering is stable across bootstrap resamples.
 
 \begin{figure}[t]
     \centering
@@ -357,31 +369,38 @@ Notably, the model's confidence interval [3,314, 3,627] does not overlap with th
 Decomposing by path coverage reveals a surprising result (Table~\ref{tab:decomposition}, Figure~\ref{fig:path-decomp}).
 On the 91.6\% of test rows where the path LUT has an exact training match, the model still achieves lower MAE (1,346 vs.\ 1,448).
 The model regularizes across similar URL structures: a path appearing 3 times in training has a noisy median, while the model smooths predictions using domain statistics, URL length, and TF-IDF embeddings.
-On the 8.4\% of rows with unseen paths---which are disproportionately expensive (mean 35,876 bytes)---both approaches struggle, but the model's error (26,655) is lower than the path LUT's domain+type fallback (29,491).
+On the 8.4\% of rows with unseen paths---which are disproportionately expensive (mean 35,876 bytes)---both approaches struggle; the model's point-estimate error (26,655) is lower than the path LUT's domain+type fallback (29,491), though bootstrap CIs overlap ([24,940--28,332] vs.\ [27,523--31,586]) and the improvement is not statistically significant at 95\% confidence.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=0.9\columnwidth]{figures/fig9_path_decomposition.pdf}
-    \caption{The model outperforms the path LUT on both seen paths (regularization beats noisy memorization) and unseen paths (generalization beats fallback).}
+    \caption{The model outperforms the path LUT on seen paths (regularization beats noisy memorization; non-overlapping bootstrap CIs) and shows lower point-estimate error on unseen paths (overlapping CIs; not statistically significant).}
     \label{fig:path-decomp}
 \end{figure}
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{lrrr}
+\begin{tabular}{lrll}
 \toprule
-Subset & $n$ & Path LUT MAE & Model MAE \\
+Subset & $n$ & Path LUT MAE [95\% CI] & Model MAE [95\% CI] \\
 \midrule
-Path seen in training (91.6\%) & 479,775 & 1,448 & \textbf{1,346} \\
-Path unseen (8.4\%) & 43,849 & 29,491 & \textbf{26,655} \\
+Seen (91.6\%) & 479,775 & 1,448\ [1,409--1,491] & \textbf{1,346\ [1,317--1,384]} \\
+Unseen (8.4\%)$^\dagger$ & 43,849 & 29,491\ [27,523--31,586] & 26,655\ [24,940--28,332] \\
 \midrule
-Overall & 523,624 & 3,797 & \textbf{3,466} \\
+Overall & 523,624 & 3,797\ [3,623--3,984] & \textbf{3,466\ [3,314--3,627]} \\
 \bottomrule
 \end{tabular}
-\caption{Model vs.\ path LUT decomposed by path coverage. The model outperforms the LUT on \emph{both} subsets.}
+\caption{Model vs.\ path LUT decomposed by path coverage (bootstrap CIs from 1,000 resamples). The seen-path improvement is statistically significant (non-overlapping CIs). $^\dagger$The unseen-path improvement is a lower point estimate but CIs overlap; the difference is not statistically significant at 95\% confidence.}
 \label{tab:decomposition}
 \end{table}
+
+\paragraph{Smoothed LUT comparison.}
+One might expect that Laplace-smoothed (add-$k$) path LUTs---which interpolate between the path-specific training mean and the global mean (unlike the median-based standard LUT baselines)---would close the gap to the model by regularizing low-count paths.
+We evaluate add-$k$ smoothing for $k \in \{0.5, 1, 2, 5, 10, 20, 50, 100\}$.
+The best variant ($k=0.5$) achieves MAE 4{,}011---5.6\% \emph{worse} than the path LUT (3{,}797) and 15.7\% worse than the model (3{,}466).
+Smoothing degrades overall accuracy because it shrinks predictions for the 91.6\% of test paths with reliable training statistics toward the global mean, increasing error on the majority to marginally reduce error on the minority.
+The model's advantage on seen paths (MAE 1{,}346) over even the lightly-smoothed LUT (MAE 1{,}686 at $k=0.5$) confirms that the model learns genuinely better cross-path representations---combining URL structure, domain statistics, and resource type---rather than merely regularizing noisy low-count path memorization.
 
 \subsection{Loss Function Ablation}
 \label{sec:loss-ablation}
@@ -393,7 +412,7 @@ To isolate the effect of loss function from architecture, we train XGBoost with 
 \small
 \begin{tabular}{lrrr}
 \toprule
-Loss function & MAE & vs.\ LUT & Spearman $\rho$ \\
+Loss function & MAE & vs.\ D+T LUT & Spearman $\rho$ \\
 \midrule
 Squared error & 4,527 & +31.4\% & 0.738 \\
 Tweedie ($p = 1.2$) & 3,486 & +47.2\% & 0.937 \\
@@ -401,18 +420,19 @@ Tweedie ($p = 1.2$) & 3,486 & +47.2\% & 0.937 \\
 Tweedie ($p = 1.8$) & 3,597 & +45.5\% & 0.949 \\
 \bottomrule
 \end{tabular}
-\caption{Loss function comparison for transfer size. Architecture (XGBoost, 500 trees) and features (80 dimensions) are held constant. ``vs.\ LUT'' is improvement over domain+type LUT (MAE 6,597). Huber loss ($\delta=10{,}000$) diverged (MAE 19,373) and is omitted.}
+\caption{Loss function comparison for transfer size. Architecture (XGBoost, 500 trees) and features (80 dimensions) are held constant. ``vs.\ D+T LUT'' is MAE improvement over the domain+type lookup table (MAE 6,597). Huber loss ($\delta=10{,}000$) diverged (MAE 19,373) and is omitted.}
 \label{tab:loss-ablation}
 \end{table}
 
 Tweedie loss at $p=1.5$ achieves the best MAE (3,466), outperforming squared error by 23\% (3,466 vs.\ 4,527) on identical features (Figure~\ref{fig:loss-ablation}).
-The Tweedie power parameter is relatively robust: $p \in [1.2, 1.8]$ all outperform squared error by at least 17\%.
+The Tweedie power parameter is relatively robust: $p \in [1.2, 1.8]$ all outperform squared error by at least 20\%.
+The 20-byte difference between $p=1.2$ (MAE 3{,}486) and $p=1.5$ (MAE 3{,}466) is well within bootstrap variance; any $p \in [1.2, 1.5]$ is effectively equivalent, and $p=1.5$ is used as a representative value.
 The mechanism is that squared error allocates model capacity uniformly across the prediction range, spending most effort on the 39.5\% of near-zero beacons where any small prediction suffices, while Tweedie loss weights errors by predicted magnitude and focuses on the high-cost tail that dominates aggregate accuracy.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\columnwidth]{figures/fig5_loss_ablation.pdf}
-    \caption{Loss function ablation. (a)~Tweedie loss reduces MAE by 23\% over squared error. (b)~The Spearman ranking quality gap is even larger (0.945 vs.\ 0.738).}
+    \caption{Loss function ablation. (a)~Tweedie loss reduces MAE by 23\% over squared error. (b)~The Spearman ranking quality gap is even larger (0.945 vs.\ 0.738); ranking quality matters for per-domain attribution, which requires correctly ordering high-cost vs.\ low-cost requests.}
     \label{fig:loss-ablation}
 \end{figure}
 
@@ -433,7 +453,7 @@ TF-IDF only (50 SVD dimensions) & 3,548 & +16.5\% \\
 \textbf{Both (56 features)} & \textbf{3,466} & \textbf{+18.5\%} \\
 \bottomrule
 \end{tabular}
-\caption{Feature ablation for URL content representation. All models use Tweedie loss and include domain, URL structure, and request metadata features. TF-IDF embeddings provide a larger improvement (16.5\%) than adding regex features on top of them (2.0\%).}
+\caption{Feature ablation for URL content representation. All models use Tweedie loss and include domain, URL structure, and request metadata features. TF-IDF embeddings provide a larger improvement (16.5\%) than adding regex features on top of them (2.3\% additional MAE reduction).}
 \label{tab:feature-ablation}
 \end{table}
 
@@ -451,9 +471,34 @@ This is expected: the TF-IDF vocabulary captures \texttt{collect}, \texttt{pixel
 \subsection{Feature Importance}
 \label{sec:feature-importance}
 
-XGBoost feature importance (gain-based) reveals that the target-encoded domain+type median dominates (8.65\% of total gain), followed by resource type indicators (\texttt{rt\_other}: 5.87\%, \texttt{rt\_text}: 3.09\%), URL pattern flags (\texttt{path\_has\_sync}: 4.88\%), and file extension indicators (\texttt{ext\_html}: 4.08\%).
-TF-IDF embedding dimensions contribute collectively: 8 of the top 15 features are embedding dimensions, individually accounting for 1.4--3.2\% of gain each.
-No single embedding dimension dominates, consistent with the distributed URL representation learned by SVD.
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Feature group & SHAP \% & Gain \% \\
+\midrule
+Domain identity & \textbf{48.2} & 9.8 \\
+URL content (TF-IDF) & 32.5 & \textbf{52.9} \\
+Request metadata & 12.0 & 17.0 \\
+URL structure & 6.0 & 11.4 \\
+URL patterns & 1.3 & 8.9 \\
+\bottomrule
+\end{tabular}
+\caption{Feature group importance: SHAP (mean $|\phi|$, 8K-row sample) vs.\ gain-based importance. The two methods give inverted rankings for the top two groups. Domain identity is dominant by SHAP; TF-IDF appears dominant by gain due to gain bias toward high-cardinality continuous features.}
+\label{tab:shap-vs-gain}
+\end{table}
+
+SHAP values (mean $|\phi|$) are computed on an 8,000-row sample via XGBoost's native \texttt{pred\_contribs}, with target encodings recomputed from the same sample; this introduces slight in-sample bias for domain identity features, which is acceptable for group-level aggregate statistics.
+The result gives a substantially different picture from gain-based importance (Table~\ref{tab:shap-vs-gain}).
+Domain identity features---the (domain, resource type) target-encoded median and the domain-level median---account for 48.2\% of total mean $|\phi|$, more than any other group.
+TF-IDF URL content ranks second (32.5\%), followed by request metadata (12.0\%), URL structure (6.0\%), and URL pattern flags (1.3\%).
+
+Gain-based importance inverts the top two groups: domain identity drops to 9.8\% while TF-IDF inflates to 52.9\%.
+This confirms the known gain bias toward high-cardinality and continuous features~\cite{lundberg2017shap}: 50 embedding dimensions each generate many high-gain splits, whereas the two target-encoded scalars accumulate impact in fewer but higher-leverage splits that gain undercounts.
+
+Among individual features, \texttt{domain\_type\_median} is by far the strongest predictor (mean $|\phi| = 3.16$), nearly 8$\times$ larger than the next feature (\texttt{rt\_other}: 0.40).
+The TF-IDF dimensions contribute collectively: 8 of the remaining top-15 features are embedding dimensions (mean $|\phi|$ 0.07--0.14 each) with no single dimension dominant, consistent with the distributed URL representation learned by SVD.
 
 \subsection{Results by Resource Type}
 \label{sec:by-type}
@@ -463,7 +508,7 @@ No single embedding dimension dominates, consistent with the distributed URL rep
 \small
 \begin{tabular}{lrrrr}
 \toprule
-Resource type & $n$ & LUT MAE & Model MAE & Improv. \\
+Resource type & $n$ & D+T LUT MAE & Model MAE & vs.\ D+T LUT \\
 \midrule
 Script & 144,676 & 12,996 & 3,135 & \textbf{+75.9\%} \\
 CSS & 6,142 & 6,222 & 2,084 & +66.5\% \\
@@ -473,20 +518,13 @@ Other (beacon) & 98,617 & 16 & 16 & +4.6\% \\
 Text & 42,984 & 292 & 303 & $-$3.8\% \\
 \bottomrule
 \end{tabular}
-\caption{Transfer size MAE by resource type. Improvement is concentrated on script (+75.9\%) and CSS (+66.5\%) resources, which have both high variance and URL-discriminative structure.}
+\caption{Transfer size MAE by resource type. Improvement is concentrated on script (+75.9\%) and CSS (+66.5\%) resources, which have both high variance and URL-discriminative structure. The six categories cover 521{,}555 of \numtestrows test rows; the remaining 2{,}069 rows ($<$0.4\%) span resource types with fewer than 1{,}000 test examples each and are omitted.}
 \label{tab:by-type}
 \end{table}
 
-The model's improvement is concentrated on resource types with high within-type variance and URL-discriminative structure (Table~\ref{tab:by-type}, Figure~\ref{fig:by-type}).
+The model's improvement is concentrated on resource types with high within-type variance and URL-discriminative structure (Table~\ref{tab:by-type}).
 Scripts see a 75.9\% MAE reduction: the model distinguishes \texttt{/gtag/js} (93\,KB bundles) from \texttt{/collect} (0-byte beacons) served by the same domain.
-For low-variance types (``other,'' mostly beacons; ``text''), the LUT's constant prediction is near-optimal and the model provides no benefit.
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=\columnwidth]{figures/fig4_per_resource_type.pdf}
-    \caption{MAE by resource type. The model's advantage is concentrated on scripts (+76\%) and CSS (+67\%), which have both high variance and URL-discriminative structure.}
-    \label{fig:by-type}
-\end{figure}
+For low-variance types (``other,'' mostly beacons; ``text''), the D+T LUT's constant prediction is near-optimal and the model provides no benefit.
 
 \subsection{Aggregation Accuracy}
 \label{sec:aggregation}
@@ -497,38 +535,44 @@ We simulate weekly browsing by sampling $N$ blocked requests (with replacement, 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{lrrrr}
+\begin{tabular}{lrrr}
 \toprule
-& \multicolumn{2}{c}{Median \% error} & \multicolumn{2}{c}{Within 10\% of truth} \\
-\cmidrule(lr){2-3} \cmidrule(lr){4-5}
-$N$ (req/week) & Model & LUT & Model & LUT \\
+$N$ (req/week) & Model & Path LUT & D+T LUT \\
 \midrule
-50 & 6.8\% & 20.8\% & 63.4\% & 25.2\% \\
-100 & 6.3\% & 20.9\% & 65.6\% & 22.1\% \\
-200 & 6.0\% & 21.9\% & 67.2\% & 13.6\% \\
-500 & 5.1\% & 23.2\% & 75.5\% & 4.2\% \\
+\multicolumn{4}{l}{\emph{Median \% error (2,000 trials):}} \\
+50  & 6.8\% & 8.4\% & 20.8\% \\
+100 & 6.3\% & 7.5\% & 20.9\% \\
+200 & 6.0\% & 6.8\% & 21.9\% \\
+500 & 5.1\% & 6.7\% & 23.2\% \\
+\midrule
+\multicolumn{4}{l}{\emph{Fraction of weeks within 10\% of truth:}} \\
+50  & 61.9\% & --- & 24.9\% \\
+100 & 65.0\% & --- & 23.1\% \\
+200 & 68.5\% & --- & 16.8\% \\
+500 & 75.3\% & --- & 5.3\% \\
 \bottomrule
 \end{tabular}
-\caption{Weekly aggregation accuracy for transfer size. The LUT's systematic bias compounds with more requests; the model's approximately symmetric errors cancel.}
+\caption{Weekly aggregation accuracy for transfer size (2,000 simulation trials). Path LUT is impractical at deployment scale (Section~\ref{sec:lut-motivation}) but shown for median \% error; within-10\% rates are reported for the model and D+T LUT only. The D+T LUT's systematic bias compounds with more requests (within-10\% drops from 24.9\% to 5.3\%); the model's within-10\% rate improves (61.9\% $\to$ 75.3\%) as errors cancel.}
 \label{tab:aggregation}
 \end{table}
 
-At 200 blocked requests per week (a typical browsing load), the model's weekly total has 6.0\% median error and falls within 10\% of truth 67.2\% of the time (Table~\ref{tab:aggregation}).
-The LUT's error is 21.9\%, and only 13.6\% of weeks are within 10\%.
+At 200 blocked requests per week (a moderate browsing load), the model's weekly total has 6.0\% median error, falling within 10\% of truth 68.5\% of the time (Table~\ref{tab:aggregation}).
+The path LUT achieves a similar 6.8\% median error at $N=200$, but this baseline is impractical at deployment scale (Section~\ref{sec:lut-motivation}).
+The practical deployed baseline---the domain+type LUT---has 21.9\% median error, with only 16.8\% of weeks within 10\%.
 
-The gap \emph{widens} with more requests (Figure~\ref{fig:agg-cdf}): at $N=500$, the model improves to 5.0\% median error while the LUT degrades to 23.0\%.
-This occurs because the LUT has a systematic directional bias for certain URL patterns (e.g., consistently overpredicting beacons and underpredicting scripts), which compounds in summation.
+The gap over the D+T LUT \emph{widens} with more requests (Figure~\ref{fig:agg-cdf}): at $N=500$, the model improves to 5.1\% median error while the D+T LUT degrades to 23.2\%.
+This occurs because the D+T LUT has systematic directional bias for certain URL patterns (e.g., consistently overpredicting beacons and underpredicting scripts), which compounds in summation.
 The model's errors are approximately mean-zero and cancel via the law of large numbers.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\columnwidth]{figures/fig3_aggregation_cdf.pdf}
-    \caption{CDF of weekly aggregation error. The model (blue) concentrates mass near zero, while the LUT (red) has a long tail of high-error weeks. The gap widens with more requests as the LUT's systematic bias compounds.}
+    \caption{CDF of weekly aggregation error. The model (blue) concentrates mass near zero, while the D+T LUT (red) has a long tail of high-error weeks. The gap widens with more requests as the D+T LUT's systematic bias compounds.}
     \label{fig:agg-cdf}
 \end{figure}
 
 \paragraph{Robustness to correlated browsing.}
-The uniform simulation assumes i.i.d.\ request sampling, but real browsing is correlated: users visit the same 10--20 sites repeatedly.
+The uniform simulation assumes i.i.d.\ request sampling, but real browsing is correlated: users tend to visit a small set of sites repeatedly.
 Since domain target encoding is the model's top feature, within-domain errors may be correlated and cancel less effectively.
 We test this by sampling 15 domains per trial (with replacement), then drawing $N$ requests from those domains only.
 
@@ -539,7 +583,7 @@ We test this by sampling 15 domains per trial (with replacement), then drawing $
 \toprule
 & \multicolumn{2}{c}{Uniform} & \multicolumn{2}{c}{Domain-correlated} \\
 \cmidrule(lr){2-3} \cmidrule(lr){4-5}
-$N$ & Model & LUT & Model & LUT \\
+$N$ & Model & D+T LUT & Model & D+T LUT \\
 \midrule
 50 & 7.1\% & 21.0\% & 14.2\% & 34.5\% \\
 100 & 6.7\% & 21.1\% & 12.5\% & 34.2\% \\
@@ -547,13 +591,15 @@ $N$ & Model & LUT & Model & LUT \\
 500 & 5.0\% & 23.0\% & 11.2\% & 36.7\% \\
 \bottomrule
 \end{tabular}
-\caption{Aggregation accuracy under uniform vs.\ domain-correlated browsing (median \% error). Correlated browsing roughly doubles the model's error (6.3\% $\to$ 12.9\% at $N\!=\!200$) but nearly triples the LUT's (22.2\% $\to$ 36.4\%). The model's relative advantage \emph{increases} under correlation.}
+\caption{Aggregation accuracy under uniform vs.\ domain-correlated browsing (median \% error; D+T LUT = domain+type LUT). Correlated browsing roughly doubles the model's error (6.3\% $\to$ 12.9\% at $N\!=\!200$) but nearly triples the D+T LUT's (22.2\% $\to$ 36.4\%). The model's absolute advantage \emph{widens} under correlation: the gap grows from 15.9\,pp (uniform) to 23.5\,pp (correlated) at $N\!=\!200$.}
 \label{tab:correlated}
 \end{table}
 
-Correlated browsing approximately doubles the model's median error at $N=200$ (6.3\% $\to$ 12.9\%), confirming the reviewer intuition that within-domain error correlation reduces cancellation.
-However, the LUT's error increases even more (22.2\% $\to$ 36.4\%), because its systematic per-domain bias is amplified when browsing concentrates on fewer domains.
-The model's relative advantage actually \emph{increases} under correlated browsing: the model is $2.8\times$ better than the LUT under domain-correlated sampling versus $3.5\times$ under uniform sampling (Table~\ref{tab:correlated}).
+Correlated browsing approximately doubles the model's median error at $N=200$ (6.3\% $\to$ 12.9\%), confirming that within-domain error correlation reduces cancellation.
+The uniform column in Table~\ref{tab:correlated} uses an independent 2,000-trial simulation from Table~\ref{tab:aggregation}; the small difference from the 6.0\% reported there reflects simulation variance.
+However, the D+T LUT's error increases even more (22.2\% $\to$ 36.4\%).
+The model's absolute advantage \emph{widens} under correlated browsing: at $N=200$, the gap grows from 15.9\,percentage points under uniform sampling to 23.5\,pp under domain-correlated sampling---because the D+T LUT's systematic per-domain bias compounds more severely when browsing concentrates on fewer domains (Table~\ref{tab:correlated}).
+The model's advantage is robust to domain count: at $N=200$, model error ranges from 11.4\%--16.5\% across $n_{\text{domains}} \in \{5, 10, 15, 20, 25\}$ vs.\ D+T LUT error from 34.2\%--37.6\%, confirming that the 15-domain choice does not qualitatively affect the conclusion.
 
 \subsection{Multi-Target Results}
 \label{sec:multi-target}
@@ -563,32 +609,34 @@ Beyond transfer size, we evaluate three timing targets using the same features a
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{lrrrl}
+\begin{tabular}{lrrlrr}
 \toprule
-Target & LUT MAE & XGB MAE & Improv. & Agg.\ err (200) \\
+Target & D+T LUT MAE & XGB MAE & vs.\ D+T LUT & Model agg. & D+T LUT agg. \\
 \midrule
-\texttt{transfer\_bytes} & 6,597 & \textbf{3,466} & +47.5\% & 6.0\% \\
-\texttt{download\_ms} & 73 & \textbf{56} & +23.7\% & 16.6\% \\
-\texttt{load\_ms} & 117 & 121 & $-$3.1\% & 5.6\% \\
-\texttt{ttfb\_ms} & 67 & 76 & $-$12.7\% & 4.0\% \\
+\texttt{transfer\_bytes} & 6,597 & \textbf{3,466} & +47.5\% & \textbf{6.0\%} & 21.9\% \\
+\texttt{download\_ms} & 73 & \textbf{56} & +23.7\% & \textbf{16.6\%} & 37.1\% \\
+\texttt{load\_ms} & 117 & 121 & $-$3.1\% & \textbf{5.6\%} & 14.2\% \\
+\texttt{ttfb\_ms} & 67 & 76 & $-$12.7\% & \textbf{4.0\%} & 13.8\% \\
 \bottomrule
 \end{tabular}
-\caption{Multi-target results. Per-request MAE improvement is strong for transfer size and download duration (both URL-dependent) but absent for latency metrics (network-dependent). However, aggregation error (rightmost column) favors the model on all targets.}
+\caption{Multi-target results. ``Model agg.'' and ``D+T LUT agg.'' are median \% error in weekly aggregation at $N\!=\!200$. Per-request MAE improvement is strong for content-dependent metrics (transfer size, download duration) but absent for network-dependent latency. Aggregation error (last two columns) favors the model on all four targets, including TTFB and load time where per-request MAE was worse.}
 \label{tab:multi-target}
 \end{table}
 
 Per-request MAE tells two distinct stories (Table~\ref{tab:multi-target}).
-Transfer size (+47.5\%) and download duration (+23.7\%) improve substantially---both are \emph{content-dependent} metrics where the URL determines the response size and hence the download time.
+Transfer size (+47.5\%) and download duration (+23.7\%) improve substantially---both are \emph{content-dependent} metrics where the URL determines response size, which is the primary driver of download time for large resources.
 TTFB ($-$12.7\%) and total load time ($-$3.1\%) do not improve---these are \emph{network-dependent} metrics determined by server latency, geographic routing, and connection conditions.
-The within-domain CV confirms this: transfer size has CV 0.94 (high, URL-predictable variance) while TTFB has CV 0.38 (low, noise-dominated variance).
+The within-domain CV confirms this: transfer size has CV 0.94 and download duration has comparably high within-domain variance (Figure~\ref{fig:cv}), both URL-predictable; TTFB has CV 0.38 (low, noise-dominated variance).
 
-However, the aggregation column reveals that the model's weekly estimates outperform the LUT on \emph{all four targets}, including TTFB (4.0\% vs.\ LUT's 13.8\%) and load time (5.6\% vs.\ 14.2\%), as shown in Figure~\ref{fig:multi-agg}.
-The model's per-request errors on timing targets are roughly symmetric and cancel in aggregation, while the LUT's systematic bias compounds.
+However, weekly aggregation (last two columns) favors the model on \emph{all four targets}: TTFB (4.0\% vs.\ 13.8\%), load time (5.6\% vs.\ 14.2\%), and notably download duration (16.6\% vs.\ 37.1\%), as shown in Figure~\ref{fig:multi-agg}.
+Even when per-request predictions are noisy, the model's errors are approximately mean-zero and cancel via aggregation; the D+T LUT's systematic bias compounds regardless of the metric.
+For timing metrics specifically, the D+T LUT's training-set medians reflect HTTP Archive's fixed crawl environment (Moto G4, cable connection); deployment conditions vary, introducing a directional shift in the LUT's predicted medians that does not cancel in aggregation.
+The model, despite higher per-request MAE on TTFB and load time, is less systematically biased because its URL features capture request-type variation that correlates with timing differences across conditions.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\columnwidth]{figures/fig10_multi_target_agg.pdf}
-    \caption{Weekly aggregation error across all four targets (N=200). The model outperforms the LUT on every target, including timing metrics where per-request MAE favored the LUT.}
+    \caption{Weekly aggregation error across all four targets ($N\!=\!200$). The model outperforms the D+T LUT on every target, including timing metrics where per-request MAE favored the D+T LUT.}
     \label{fig:multi-agg}
 \end{figure}
 
@@ -616,32 +664,78 @@ Path LUT MAE & 3,797 & 4,966 & +30.8\% \\
 \textbf{XGBoost Tweedie MAE} & \textbf{3,466} & \textbf{4,517} & \textbf{+30.3\%} \\
 \quad 95\% CI & [3,314, 3,627] & [4,458, 4,581] & \\
 \quad Spearman $\rho$ & 0.945 & 0.942 & \\
-\quad vs.\ LUT & +47.5\% & +32.8\% & \\
+\quad vs.\ D+T LUT & +47.5\% & +32.8\% & \\
 \midrule
 \multicolumn{3}{l}{\emph{Aggregation (N=200):}} \\
 \quad Model med.\ err & 6.1\% & 10.1\% & \\
-\quad LUT med.\ err & 21.8\% & 21.5\% & \\
+\quad D+T LUT med.\ err & 21.8\% & 21.5\% & \\
 \midrule
 \multicolumn{3}{l}{\emph{Scripts only:}} \\
 \quad Model MAE & 3,135 & 6,428 & \\
-\quad LUT MAE & 12,996 & 13,021 & \\
+\quad D+T LUT MAE & 12,996 & 13,021 & \\
 \quad Improvement & +75.9\% & +50.6\% & \\
 \bottomrule
 \end{tabular}
-\caption{Temporal generalization: train on June 2024, test on September 2024. The model degrades by 30\% but retains a 32.8\% advantage over the LUT. Ranking quality ($\rho$) is nearly unchanged. Path coverage drops from 91.6\% to 85.1\%.}
+\caption{Temporal generalization: train on June 2024, test on September 2024. The model degrades by 30\% but retains a 32.8\% advantage over the D+T LUT. Ranking quality ($\rho$) is nearly unchanged. Path coverage drops from 91.6\% to 85.1\%. The model and path LUT degrade similarly ($\sim$30\%), while the D+T LUT is nearly stable ($+$1.9\%) due to its coarser granularity---explaining why the relative advantage is retained despite absolute degradation.}
 \label{tab:temporal}
 \end{table}
 
 The model's MAE degrades by 30.3\% (3,466 $\to$ 4,517) over three months (Table~\ref{tab:temporal}).
 The path LUT degrades by a similar amount (30.8\%), while the domain+type LUT barely changes (+1.9\%)---its coarser granularity makes it more temporally stable but permanently less accurate.
 
-Critically, the model retains a \textbf{32.8\% advantage over the LUT} on September data, compared to 47.5\% on June.
+Critically, the model retains a \textbf{32.8\% advantage over the D+T LUT} on September data, compared to 47.5\% on June.
 Ranking quality is nearly unchanged ($\rho = 0.942$ vs.\ 0.945).
-The weekly aggregation estimate degrades from 6.1\% to 10.1\% median error---still substantially below the LUT's 21.5\%.
+The weekly aggregation estimate degrades from 6.1\% to 10.1\% median error---still substantially below the D+T LUT's 21.5\%.
 Scripts remain the strongest category, with the model achieving +50.6\% improvement in September versus +75.9\% in June.
 
 The degradation is driven by URL path churn: only 14.9\% of unique September paths were seen in June, compared to the 91.6\% coverage within the June random split.
 This suggests \textbf{quarterly retraining} on fresh HTTP Archive data to maintain accuracy, which is feasible given the monthly crawl cadence.
+
+\subsection{Calibration Analysis}
+\label{sec:calibration}
+
+We evaluate whether the model is well-calibrated across the prediction range by partitioning test rows into bins defined by the \emph{predicted} value and measuring the fraction of predictions within 25\% of the true value (Table~\ref{tab:calibration}). Stratifying by predicted value isolates the model's behavior in each output regime; we report both the actual mean per bin against the predicted mean (testing mean-unbiasedness) and the fraction within 25\% of the true value (testing interval accuracy).
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Predicted size range & $n$ & Pred.\ mean & Actual mean & Within 25\% \\
+\midrule
+0--100 B     &  26,462 &       20 &        63   &  51.3\% \\
+100--500 B   &   3,476 &      212 &       458   &  72.2\% \\
+500 B--1 KB  &   1,117 &      697 &     2,144   &  42.5\% \\
+1--5 KB      &   3,250 &    2,459 &     3,153   &  49.6\% \\
+5--10 KB     &   1,709 &    7,169 &     8,550   &  66.1\% \\
+10--25 KB    &   4,044 &   17,146 &    18,993   &  59.1\% \\
+25--50 KB    &   1,363 &   34,425 &    35,911   &  37.3\% \\
+50--100 KB   &   4,777 &   82,147 &    83,234   &  86.6\% \\
+100--250 KB  &     576 &  145,427 &   171,091   &  74.7\% \\
+250 KB+      &     120 &  671,042 &   640,626   &  25.8\% \\
+\bottomrule
+\end{tabular}
+\caption{Model calibration by \emph{predicted} size bin. Each row groups test rows by predicted value; ``Pred.\ mean'' is the mean prediction and ``Actual mean'' is the mean true value for that group. The model is well-calibrated for large bundles (50--100\,KB: predicted 82\,KB, actual 83\,KB) but underpredicts in the 500\,B--1\,KB stratum (predicted mean 697\,B, actual mean 2,144\,B): rows the model assigns to this range occasionally correspond to much larger actual responses (actual median 563\,B; right tail pulls the mean up). Figure~\ref{fig:calibration} plots the calibration curve.}
+\label{tab:calibration}
+\end{table}
+
+The model is well-calibrated for the two dominant prediction regimes: near-zero predictions (0--100\,B bin, 51.3\% within 25\%) and large-bundle predictions (50--100\,KB bin, 86.6\%)---the two modes of the transfer size distribution (Figure~\ref{fig:target-dist}).
+The 500\,B--1\,KB predicted bin shows systematic underprediction: rows the model predicts in this range have actual mean 2,144\,B and actual median 563\,B.
+The divergence between mean (2,144) and median (563) signals that a minority of actual responses within this predicted stratum are much larger than 1\,KB, pulling up the mean---consistent with the model correctly predicting \emph{most} responses in this range but occasionally misclassifying large responses as small ones.
+The 1--5\,KB bin shows a similar pattern (predicted mean 2,459 vs.\ actual mean 3,153, 49.6\% within 25\%).
+These cases correspond to JSON API responses and small CSS files that straddle the boundary between the near-zero beacon mass and the large-bundle mode---the predicted range with the sparsest test-set coverage (1,117 rows in Table~\ref{tab:calibration}; similarly sparse in training given the random split), where gradient signal from these examples is diluted by the much larger beacon cluster (26,462 rows, 0--100\,B) and large-bundle mode.
+The 25--50\,KB bin presents a different pattern: it is mean-calibrated (predicted mean 34\,KB vs.\ actual mean 36\,KB) but has notably low within-25\% accuracy (37.3\%) for a mean-calibrated bin, indicating high within-bin variance around the predicted range rather than systematic bias.
+
+This calibration gap has limited impact on the primary use case.
+Aggregation across $N$ requests reduces per-prediction bias as errors from different size ranges partially cancel (Table~\ref{tab:aggregation}), producing 6.0\% median weekly error at $N=200$.
+However, for applications requiring per-request accuracy in the mid-range (e.g., attributing cost to a specific JSON tracking call), the model's estimates should be treated as order-of-magnitude estimates rather than precise values.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig4_calibration.pdf}
+    \caption{Model calibration by predicted size bin. (a)~Log-log scatter of predicted mean vs.\ actual mean per bin; bubble size proportional to $n$; color encodes fraction within 25\%. The dashed line is perfect calibration. The model is well-calibrated for the beacon mass ($<$100\,B, 51.3\% within 25\%) and JS bundles (50--100\,KB, 86.6\%) but systematically underpredicts for rows it assigns to the 500\,B--5\,KB range. (b)~Per-bin accuracy (fraction within 25\% of actual).}
+    \label{fig:calibration}
+\end{figure}
 
 % ============================================================
 \section{Analysis}
@@ -651,27 +745,19 @@ This suggests \textbf{quarterly retraining} on fresh HTTP Archive data to mainta
 \subsection{Domain-Level Estimation Does Not Need ML}
 \label{sec:domain-level}
 
-A natural first approach is domain-level scoring: assign each tracker domain a static cost score using aggregated HTTP Archive features.
-We built this pipeline for 4,592 domains, training XGBoost on 19 features to predict CPU and network cost scores (Spearman $\rho = 0.751$ and $0.999$ respectively).
+We initially attempted domain-level scoring: assigning each of 4,592 tracker domains (a broader set drawn from the full HTTP Archive entity list, prior to the per-request 1\% sample filtering) a static cost score from aggregated HTTP Archive features.
+This formulation does not require machine learning.
+Of the 4,592 domains, 48\% have direct Lighthouse CPU measurements; the remaining 52\% fall below Lighthouse's $\sim$50\,ms reporting threshold and are uniformly inexpensive; a KS test confirms the two populations are feature-distinct across all dimensions ($p < 0.001$).
+A simple non-ML rule suffices: measured domains receive a cost score directly from their Lighthouse metrics; unmeasured domains are classified as inexpensive regardless of other features.
+The disjointness is structural: non-measured domains have no path-level statistics and no domain target encodings analogous to the Lighthouse-measured population---their feature vectors cluster at global-fallback values across all 80 dimensions.
+Self-training~\cite{yarowsky1995unsupervised} (pseudo-labeling with confidence threshold 0.8, three iterations) produced zero improvement because high-confidence pseudo-labels were concentrated among inexpensive domains already well-covered by simple LUT rules.
+The per-request formulation, where blocked requests have no response and URL-level variance is too large for lookup tables (Section~\ref{sec:lut-motivation}), is the genuine prediction problem.
 
-The problem does not require machine learning.
-Of the 4,592 domains, 2,185 (48\%) have direct Lighthouse CPU measurements and need no prediction.
-The remaining 2,407 (52\%) fall below Lighthouse's $\sim$50\,ms reporting threshold and are uniformly inexpensive.
-KS tests confirm the two populations are disjoint on every feature ($p < 0.001$; median \texttt{max\_script\_bytes}: 20,338 vs.\ 585).
-Self-training~\cite{yarowsky1995unsupervised} produced zero improvement because the feature-space disjointness prevented any unlabeled domain from receiving a confident pseudo-label.
+\subsection{Tweedie's Tail Prioritization Concentrates Gains in Aggregation}
 
-This negative result has a constructive implication: it establishes the criteria for a genuine prediction problem in this domain.
-The domain-level formulation fails the test because labels are available (or trivially assignable) for both populations.
-The per-request formulation passes: blocked requests have no response, and the URL-level variance (Section~\ref{sec:lut-motivation}) is too large for lookup tables to resolve.
-
-\subsection{Why Tweedie Loss Outperforms Squared Error}
-
-The transfer size distribution is zero-inflated: 39.5\% of values are exactly zero (beacons), while the remaining 60.5\% span five orders of magnitude.
-Squared error treats a 100-byte error on a beacon identically to a 100-byte error on a 170\,KB script.
-Tweedie loss with $p > 1$ scales the penalty by $\hat{y}^{2-p}$, effectively down-weighting near-zero predictions where absolute error is already small and up-weighting large predictions where accuracy matters for the aggregate.
-
-This explains the 23\% MAE gap (3,466 vs.\ 4,527).
-It also explains why the gap translates to an even larger aggregation advantage: the beacons that squared error over-optimizes for contribute negligibly to the weekly total, while the scripts that Tweedie prioritizes dominate it.
+Beacons (39.5\% of requests, near-zero transfer size) contribute negligibly to the weekly bandwidth total, while the high-cost scripts that Tweedie loss prioritizes dominate it.
+This means Tweedie's per-request gains are concentrated where they matter most for aggregation.
+Consistent with this, the largest per-request MAE improvements by resource type are scripts (+75.9\%) and CSS (+66.5\%)---precisely the high-transfer types that dominate weekly bandwidth totals (Table~\ref{tab:by-type}).
 Figure~\ref{fig:pred-actual} confirms the model tracks the diagonal across five orders of magnitude, with tightest predictions in the 10\,KB--100\,KB range (JavaScript bundles).
 
 \begin{figure}[t]
@@ -696,9 +782,8 @@ Inference latency is on the order of microseconds.
 Since cost estimates are used for background aggregation rather than real-time decisions, latency is not a constraint.
 
 \paragraph{Deployment status.}
-This model is scheduled for release in Firefox in May 2026 as part of a New Tab privacy widget, surfacing per-request cost estimates to approximately 250 million daily active users.
-Model updates are delivered via Firefox Remote Settings, the same mechanism used for the Disconnect list.
-Monthly retraining on fresh HTTP Archive crawl data tracks changes in tracker SDK versions and URL structures.
+This model is planned for integration into Firefox as part of a New Tab privacy widget, surfacing per-request cost estimates to users.
+Model updates would be delivered via Firefox Remote Settings, the same mechanism used for the Disconnect list, with quarterly retraining on fresh HTTP Archive crawl data to track changes in tracker SDK versions and URL structures (the HTTP Archive crawls monthly, so quarterly retraining is feasible with a one-crawl lag).
 
 % ============================================================
 \section{Limitations}
@@ -707,7 +792,7 @@ Monthly retraining on fresh HTTP Archive crawl data tracks changes in tracker SD
 
 \paragraph{Temporal stability.}
 The model degrades by 30\% over three months (June $\to$ September 2024; Section~\ref{sec:temporal}), driven by URL path churn (only 14.9\% of unique September paths were seen in June).
-The model retains a 32.8\% advantage over the LUT on September data, but quarterly retraining on fresh HTTP Archive crawls is recommended for deployment.
+The model retains a 32.8\% advantage over the D+T LUT on September data, but quarterly retraining on fresh HTTP Archive crawls is recommended for deployment.
 Longer-term degradation (6--12 months) has not been measured.
 
 \paragraph{Timing metric validity.}
@@ -720,29 +805,43 @@ We report timing results but recommend deploying only the transfer size model.
 The model trains on HTTP Archive's third-party entity list and deploys on Firefox's Disconnect list.
 These overlap substantially but not completely.
 Disconnect-only domains absent from HTTP Archive receive the global median fallback.
+Model prediction error is only weakly correlated with domain out-of-distribution status ($r = 0.05$), confirming that covariate shift does not selectively degrade accuracy for Disconnect-only domains.
+
+\paragraph{Calibration bias in the mid-range.}
+As reported in Section~\ref{sec:calibration}, the model's 500\,B--1\,KB predicted stratum has actual mean 2,144\,B---rows it assigns small predictions occasionally correspond to much larger actual responses.
+This affects JSON API responses and small CSS files at the boundary between the beacon mass and the large-bundle mode---the region with the sparsest coverage in Table~\ref{tab:calibration} (the 500\,B--1\,KB predicted bin has only 1{,}117 test-set rows, and training density is comparably sparse).
+Per-request accuracy in the 500\,B--5\,KB predicted range should be treated as order-of-magnitude rather than precise; aggregation substantially mitigates this bias (Section~\ref{sec:aggregation}).
 
 \paragraph{Server-side variation.}
 A/B tests, geo-targeting, and SDK versioning cause the same URL to return different payloads.
 This is irreducible noise: no pre-response feature can predict server-side randomization.
 Aggregation across many requests mitigates this.
 
+\paragraph{Cascading blocking effects.}
+Our predictions estimate the cost of each blocked request in isolation.
+In practice, many trackers act as loaders that dynamically inject additional third-party scripts: blocking a tag manager or consent provider can prevent an entire chain of downstream analytics and advertising requests from ever being issued.
+Since our cost estimates cover only the directly-blocked request, aggregated weekly totals represent a \emph{lower bound} on the true bandwidth saved by ETP.
+Quantifying the cascading multiplier would require paired crawls (with and without blocking) of the kind \citet{brave2019savings} use to estimate page-level savings, which is orthogonal to the per-request prediction problem we address.
+
 \paragraph{Ecological validity of aggregation simulation.}
 Domain-correlated browsing simulation (Section~\ref{sec:aggregation}) roughly doubles the model's weekly error (6.3\% $\to$ 12.9\%), confirming that error correlation reduces cancellation.
-Real browsing patterns may differ from our 15-domain simulation in ways we cannot fully characterize without per-user telemetry.
+The model's advantage is robust to domain count across $n_{\text{domains}} \in \{5, 10, 15, 20, 25\}$ (Section~\ref{sec:aggregation}).
+The remaining unquantified uncertainty is not the domain count but the shape of the domain-visit distribution: the simulation selects domains uniformly at random from the test set, whereas real browsing tends to be more concentrated, with visits clustering on a small set of frequently-visited sites. Per-user telemetry would be required to characterize this further.
 
 % ============================================================
 \section{Conclusion}
 \label{sec:conclusion}
 % ============================================================
 
-We have shown that the performance cost of blocked tracker requests---structurally unobservable because the response is never received---can be predicted from pre-response features with sufficient accuracy for user-facing display.
+We have shown that the performance cost of blocked tracker requests---structurally unobservable because the response is never received---can be predicted from pre-response features with 6.0\% median weekly aggregation error over the deployed baseline and 68.5\% of weeks within 10\% of true cost.
 Our analysis of \numrequests tracker requests reveals that within-domain transfer size variance spans three orders of magnitude, but this variance is predictable from URL structure: learned models outperform even exact-path memorization by regularizing across similar URL patterns.
 
-Three findings generalize beyond the Firefox deployment context.
-First, for zero-inflated web response data, loss function selection (Tweedie vs.\ squared error, 23\% gap) matters more than model architecture---a reusable insight for web measurement tasks with similar distributional properties.
+Four findings generalize beyond the Firefox deployment context.
+First, for zero-inflated web response data, loss function selection (Tweedie vs.\ squared error, 23\% MAE gap) is the dominant modeling choice---a gap that dwarfs the sensitivity to Tweedie parameter tuning (0.6\%) and a reusable insight for web measurement tasks with similar distributional properties.
 Second, data-driven TF-IDF URL embeddings subsume hand-crafted regex features, reducing the need for domain-specific feature engineering in URL-based prediction tasks.
-Third, per-request prediction noise cancels in aggregation even under correlated browsing, enabling accurate cost estimation from inherently noisy individual predictions.
-These results hold under correlated-browsing simulation, and the framework generalizes to any browser intervention where the cost of the blocked action is unobservable.
+Third, per-request prediction noise cancels in aggregation: model error is 6.0\% under uniform sampling and 12.9\% under domain-correlated browsing at $N\!=\!200$---substantially below the D+T LUT's 21.9\% and 36.4\% respectively---enabling practical cost estimation from inherently noisy individual predictions.
+Fourth, for models with target-encoded categorical features, gain-based importance gives an inverted picture: gain attributes 52.9\% to TF-IDF embeddings while SHAP attributes 48.2\% to domain identity. Practitioners on URL-based prediction tasks should treat gain-based feature importance as unreliable when target encodings coexist with high-dimensional continuous features, and should prioritize domain-coverage data collection over further URL feature engineering.
+These results hold under correlated-browsing simulation, and the general framework---training on completed requests, deploying on blocked ones---applies to any browser intervention where labeled examples of the intercepted resource type can be collected from a proxy population.
 
 % ============================================================
 % References

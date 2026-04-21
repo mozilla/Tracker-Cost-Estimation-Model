@@ -62,3 +62,11 @@ models/self_trained/
 
 # OS
 .DS_Store
+
+# Autonomous agent scaffolding (not for publication)
+PROMPT.md
+run_cycle.sh
+logs/
+versions/
+comment.cut
+slack_messages.txt
